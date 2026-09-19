@@ -1,0 +1,226 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum KeyStatus {
+  active
+  expired
+  banned
+}
+
+enum LogStatus {
+  success
+  fail
+}
+
+model LicenseKey {
+  id             String    @id @default(uuid())
+  keyValue       String    @unique @map("key_value")
+  expiresAt      DateTime  @map("expires_at")
+  status         KeyStatus @default(active)
+  maxDevices     Int       @default(1) @map("max_devices")
+  maxRequests    Int       @default(1000) @map("max_requests")
+  rateLimit      Int       @default(100) @map("rate_limit")
+  allowedIPs     String[]  @default([]) @map("allowed_ips")
+  tier           String    @default("basic")
+  bundleIds      String[]  @default([]) @map("bundle_ids") // Multi-app support
+  isTrial        Boolean   @default(false) @map("is_trial") // Auto-expire after first use
+  trialExpiresAt DateTime? @map("trial_expires_at") // Trial expiration date
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  devices    Device[]
+  usageStats UsageStats[]
+
+  @@index([keyValue])
+  @@map("license_keys")
+}
+
+model Device {
+  id        String   @id @default(uuid())
+  keyId     String   @map("key_id")
+  udid      String
+  bundleId  String   @map("bundle_id")
+  firstSeen DateTime @default(now()) @map("first_seen")
+  lastSeen  DateTime @default(now()) @map("last_seen")
+
+  key LicenseKey @relation(fields: [keyId], references: [id], onDelete: Cascade)
+
+  @@unique([keyId, udid])
+  @@map("devices")
+}
+
+model Log {
+  id        String    @id @default(uuid())
+  key       String
+  udid      String?
+  ipAddress String?   @map("ip_address")
+  status    LogStatus
+  reason    String?
+  timestamp DateTime  @default(now()) @map("timestamp")
+
+  @@index([key])
+  @@index([timestamp])
+  @@map("logs")
+}
+
+model Admin {
+  id          String    @id @default(uuid())
+  username    String    @unique
+  password    String
+  role        AdminRole @default(viewer)
+  totpSecret  String?   @map("totp_secret")
+  totpEnabled Boolean   @default(false) @map("totp_enabled")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  apiKeys   ApiKey[]
+  auditLogs AuditLog[]
+
+  @@map("admins")
+}
+
+enum AdminRole {
+  owner
+  admin
+  editor
+  viewer
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  adminId    String   @map("admin_id")
+  action     String
+  resource   String
+  resourceId String?  @map("resource_id")
+  details    Json?
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  timestamp  DateTime @default(now()) @map("timestamp")
+
+  admin Admin @relation(fields: [adminId], references: [id])
+
+  @@index([adminId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+model ApiKey {
+  id          String    @id @default(uuid())
+  keyId       String    @unique @map("key_id")
+  hashedKey   String    @unique @map("hashed_key")
+  name        String
+  permissions String[]  @default(["read"])
+  lastUsedAt  DateTime? @map("last_used_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  adminId     String    @map("admin_id")
+
+  admin Admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model Webhook {
+  id        String   @id @default(uuid())
+  url       String
+  events    String[] @default(["key_created", "key_expired"])
+  secret    String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("webhooks")
+}
+
+model RateLimitEntry {
+  id           String   @id @default(uuid())
+  keyValue     String   @map("key_value")
+  windowStart  DateTime @map("window_start")
+  requestCount Int      @default(0) @map("request_count")
+
+  @@unique([keyValue, windowStart])
+  @@map("rate_limit_entries")
+}
+
+model AdminAction {
+  id         String   @id @default(uuid())
+  adminId    String   @map("admin_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  oldValue   Json?
+  newValue   Json?
+  ipAddress  String?  @map("ip_address")
+  timestamp  DateTime @default(now()) @map("timestamp")
+
+  @@index([adminId])
+  @@index([timestamp])
+  @@map("admin_actions")
+}
+
+model UsageStats {
+  id            String   @id @default(uuid())
+  keyId         String   @map("key_id")
+  date          DateTime @db.Date
+  requestCount  Int      @default(0) @map("request_count")
+  uniqueDevices Int      @default(0) @map("unique_devices")
+
+  key LicenseKey @relation(fields: [keyId], references: [id], onDelete: Cascade)
+
+  @@unique([keyId, date])
+  @@map("usage_stats")
+}
+
+// Package/Bundle management - keys work for multiple apps
+model Package {
+  id          String   @id @default(uuid())
+  name        String
+  bundleId    String   @unique @map("bundle_id")
+  displayName String?  @map("display_name")
+  iconUrl     String?  @map("icon_url")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([bundleId])
+  @@map("packages")
+}
+
+// Import/Export history
+model KeyImport {
+  id           String   @id @default(uuid())
+  fileName     String   @map("file_name")
+  keysImported Int      @default(0) @map("keys_imported")
+  status       String   @default("pending")
+  errors       String?  @map("errors")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("key_imports")
+}
+
+// API Protection - anti-cheat
+model ApiProtection {
+  id            String   @id @default(uuid())
+  fingerprint   String   @unique
+  blocked       Boolean  @default(false)
+  requestCount  Int      @default(0) @map("request_count")
+  lastRequestAt DateTime @map("last_request_at")
+  firstSeenAt   DateTime @default(now()) @map("first_seen_at")
+  blockedReason String?  @map("blocked_reason")
+
+  @@index([fingerprint])
+  @@map("api_protection")
+}
+
+// Global IP Whitelist
+model IpWhitelist {
+  id          String   @id @default(uuid())
+  ip          String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([ip])
+  @@map("ip_whitelist")
+}

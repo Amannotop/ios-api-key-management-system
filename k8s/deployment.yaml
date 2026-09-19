@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: license-server
+  labels:
+    app: license-server
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: license-server-config
+  namespace: license-server
+data:
+  DATABASE_URL: "postgresql://postgres:CHANGE_ME@postgres:5432/license_key_db"
+  REDIS_URL: "redis://redis:6379"
+  JWT_SECRET: "CHANGE_ME_IN_PRODUCTION"
+  ADMIN_USERNAME: "admin"
+  ADMIN_PASSWORD: "CHANGE_ME_IN_PRODUCTION"
+  NODE_ENV: "production"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: license-server-backend
+  namespace: license-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: license-server-backend
+  template:
+    metadata:
+      labels:
+        app: license-server-backend
+    spec:
+      containers:
+      - name: backend
+        image: ghcr.io/YOUR_ORG/license-server/backend:latest
+        ports:
+        - containerPort: 3001
+        envFrom:
+        - configMapRef:
+            name: license-server-config
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: license-server-frontend
+  namespace: license-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: license-server-frontend
+  template:
+    metadata:
+      labels:
+        app: license-server-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: ghcr.io/YOUR_ORG/license-server/frontend:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NEXT_PUBLIC_API_URL
+          value: "http://license-server-backend:3001"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: license-server-backend
+  namespace: license-server
+spec:
+  selector:
+    app: license-server-backend
+  ports:
+  - port: 3001
+    targetPort: 3001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: license-server-frontend
+  namespace: license-server
+spec:
+  selector:
+    app: license-server-frontend
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: LoadBalancer
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: license-server-backend-hpa
+  namespace: license-server
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: license-server-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

@@ -1,0 +1,40 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: license-server-ingress
+  namespace: license-server
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+spec:
+  tls:
+  - hosts:
+    - license.example.com
+    secretName: license-server-tls
+  rules:
+  - host: license.example.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: license-server-backend
+            port:
+              number: 3001
+      - path: /metrics
+        pathType: Prefix
+        backend:
+          service:
+            name: license-server-backend
+            port:
+              number: 3001
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: license-server-frontend
+            port:
+              number: 80
